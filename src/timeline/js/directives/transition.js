@@ -40,7 +40,7 @@ var track_container_height = -1;
 // 1: can be dragged
 // 2: can be resized
 // 3: class change when hovered over
-var dragLog = null;
+var dragLoc = null;
 
 App.directive('tlTransition', function(){
 	return {
@@ -85,7 +85,7 @@ App.directive('tlTransition', function(){
 					}
 
 					// Make the keyframe points visible again
-					element.find('.point_icon').show()
+					element.find('.point_icon').show();
 
 					//get amount changed in width
 					var delta_x = ui.originalSize.width - ui.size.width;
@@ -105,7 +105,12 @@ App.directive('tlTransition', function(){
 
 					//apply the new start, end and length to the transition's scope
 					scope.$apply(function(){
-	
+
+						// Get the nearest starting frame position to the transition position (this helps to prevent cutting
+						// in-between frames, and thus less likely to repeat or skip a frame).
+						new_right = (Math.round((new_right * scope.project.fps.num) / scope.project.fps.den ) * scope.project.fps.den ) / scope.project.fps.num;
+						new_left = (Math.round((new_left * scope.project.fps.num) / scope.project.fps.den ) * scope.project.fps.den ) / scope.project.fps.num;
+
 						if (dragLoc == 'right'){
 							scope.transition.end = new_right;
 						}
@@ -113,10 +118,10 @@ App.directive('tlTransition', function(){
 							scope.transition.position = new_left;
 							scope.transition.end -= delta_time;
 						}
-						
+
 						// update transition in Qt (very important =)
             			if (scope.Qt)
-            				timeline.update_transition_data(JSON.stringify(scope.transition));
+            				timeline.update_transition_data(JSON.stringify(scope.transition), true, false);
 
 					});
 				
@@ -225,7 +230,7 @@ App.directive('tlTransition', function(){
                                							  "left": $(this).position().left + horz_scroll_offset};
 
                         //send transition to bounding box builder
-                        setBoundingBox($(this));
+                        setBoundingBox(scope, $(this));
                     });
 
 					// Does this bounding box overlap a locked track?

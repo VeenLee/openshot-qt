@@ -57,6 +57,9 @@ import sys
 import fnmatch
 from shutil import copytree, rmtree, copy
 from cx_Freeze import setup, Executable
+from PyQt5.QtCore import QLibraryInfo
+import shutil
+
 
 # Determine which JSON library is installed
 json_library = None
@@ -90,6 +93,10 @@ if os.path.exists(os.path.join(PATH, "openshot_qt")):
     sys.path.append(os.path.join(PATH, "openshot_qt"))
     print("Loaded modules from openshot_qt directory: %s" % os.path.join(PATH, "openshot_qt"))
 
+# Append possible build server paths
+sys.path.insert(0, os.path.join(PATH, "build", "install-x86", "lib"))
+sys.path.insert(0, os.path.join(PATH, "build", "install-x64", "lib"))
+
 
 from classes import info
 from classes.logger import log
@@ -117,6 +124,24 @@ external_so_files = []
 build_options = {}
 build_exe_options = {}
 
+# Copy QT translations to local folder (to be packaged)
+qt_local_path = os.path.join(PATH, "openshot_qt", "language")
+qt_system_path = QLibraryInfo.location(QLibraryInfo.TranslationsPath)
+if os.path.exists(qt_system_path):
+    # Create local QT translation folder (if needed)
+    if not os.path.exists(qt_local_path):
+        os.mkdir(qt_local_path)
+    # Loop through QT translation files and copy them
+    for file in os.listdir(qt_system_path):
+        # Copy QT translation files
+        if (file.startswith("qt_") or file.startswith("qtbase_")) and file.endswith(".qm"):
+            shutil.copyfile(os.path.join(qt_system_path, file), os.path.join(qt_local_path, file))
+
+# Copy git log files into src files (if found)
+for project in ["libopenshot-audio", "libopenshot", "openshot-qt"]:
+    git_log_path = os.path.join(PATH, "build", "install-x64", "share", "%s.log" % project)
+    if os.path.exists(git_log_path):
+        src_files.append((git_log_path, "settings/%s.log" % project))
 
 if sys.platform == "win32":
     base = "Win32GUI"
@@ -129,6 +154,11 @@ if sys.platform == "win32":
     # Append some additional files for Windows (this is a debug launcher)
     src_files.append((os.path.join(PATH, "installer", "launch-win.bat"), "launch-win.bat"))
 
+    # Add libresvg (if found)
+    resvg_path = "C:\\msys64\\usr\\local\\lib\\resvg.dll"
+    if os.path.exists(resvg_path):
+        external_so_files.append((resvg_path, resvg_path.replace("C:\\msys64\\usr\\local\\lib\\", "")))
+
     # Add additional package
     python_packages.append('idna')
 
@@ -140,10 +170,23 @@ if sys.platform == "win32":
         src_files.append((filename, os.path.join("lib", "zmq", filename.replace(zmq_path + "\\", ""))))
 
 elif sys.platform == "linux":
+    # Find libopenshot.so path (GitLab copies artifacts into local build/install folder)
+    libopenshot_path = os.path.join(PATH, "build", "install-x64", "lib")
+    if not os.path.exists(libopenshot_path):
+        libopenshot_path = os.path.join(PATH, "build", "install-x86", "lib")
+    if not os.path.exists(libopenshot_path):
+        # Default to user install path
+        libopenshot_path = "/usr/local/lib"
+
     # Find all related SO files
-    for filename in find_files("/usr/local/lib/", ["*openshot*.so*"]):
-        if "python" not in filename:
-            external_so_files.append((filename, filename.replace("/usr/local/lib/", "")))
+    for filename in find_files(libopenshot_path, ["*openshot*.so*"]):
+        if '_' in filename or filename.count(".") == 2:
+            external_so_files.append((filename, filename.replace("/usr/local/lib/", "").replace(libopenshot_path + "/", "")))
+
+    # Add libresvg (if found)
+    resvg_path = "/usr/local/lib/libresvg.so"
+    if os.path.exists(resvg_path):
+        external_so_files.append((resvg_path, resvg_path.replace("/usr/local/lib/", "")))
 
     # Append Linux ICON file
     iconFile += ".svg"
@@ -157,7 +200,7 @@ elif sys.platform == "linux":
 
     # Get a list of all openshot.so dependencies (scan these libraries for their dependencies)
     import subprocess
-    for library in ["/usr/local/lib/libopenshot.so",
+    for library in [os.path.join(libopenshot_path, "libopenshot.so"),
                     "/usr/lib/python3/dist-packages/PyQt5/QtWebKit.cpython-34m-x86_64-linux-gnu.so",
                     "/usr/lib/python3/dist-packages/PyQt5/QtSvg.cpython-34m-x86_64-linux-gnu.so",
                     "/usr/lib/python3/dist-packages/PyQt5/QtWebKitWidgets.cpython-34m-x86_64-linux-gnu.so",
@@ -165,7 +208,8 @@ elif sys.platform == "linux":
                     "/usr/lib/python3/dist-packages/PyQt5/QtCore.cpython-34m-x86_64-linux-gnu.so",
                     "/usr/lib/python3/dist-packages/PyQt5/QtGui.cpython-34dm-x86_64-linux-gnu.so",
                     "/usr/lib/python3/dist-packages/PyQt5/QtDBus.cpython-34dm-x86_64-linux-gnu.so",
-                    "/usr/lib/x86_64-linux-gnu/qt5/plugins/platforms/libqxcb.so"]:
+                    "/usr/lib/x86_64-linux-gnu/qt5/plugins/platforms/libqxcb.so",
+                    "/usr/local/lib/libresvg.so"]:
         p = subprocess.Popen(["ldd", library], stdout=subprocess.PIPE)
         out, err = p.communicate()
         depends = str(out).replace("\\t","").replace("\\n","\n").replace("\'","").split("\n")
@@ -182,17 +226,19 @@ elif sys.platform == "linux":
                 if len(libdetailsparts) > 1:
                     # Determine if dependency is usr installed (or system installed)
                     # Or if the dependency matches one of the following exceptions
+                    # And ignore paths that start with /lib
                     libpath = libdetailsparts[0].strip()
                     libpath_folder, libpath_file = os.path.split(libpath)
                     if (libpath \
                         and not libpath.startswith("/lib") \
                         and not "libnvidia-glcore.so" in libpath \
-                        and not libpath_file in ["libstdc++.so.6", "libGL.so.1", "libxcb.so.1", "libX11.so.6", "libasound.so.2", "libgcc_s.so.1 ", "libICE.so.6", "libp11-kit.so.0", "libSM.so.6", "libgobject-2.0.so.0"]) \
+                        and not libpath_file in ["libstdc++.so.6", "libGL.so.1", "libxcb.so.1", "libX11.so.6", "libasound.so.2", "libgcc_s.so.1 ", "libICE.so.6", "libp11-kit.so.0", "libSM.so.6", "libgobject-2.0.so.0", "libdrm.so.2"]) \
                             or libpath_file in ["libgcrypt.so.11", "libQt5DBus.so.5", "libpng12.so.0", "libbz2.so.1.0", "libqxcb.so"]:
 
-                        # Ignore paths that start with /lib
-                        filepath, filename = os.path.split(libpath)
-                        external_so_files.append((libpath, filename))
+                        # Ignore missing files
+                        if os.path.exists(libpath):
+                            filepath, filename = os.path.split(libpath)
+                            external_so_files.append((libpath, filename))
 
     # Manually add missing files (that were missed in the above step). These files are required
     # for certain distros (like Fedora, openSUSE, Debian, etc...)
@@ -210,8 +256,13 @@ elif sys.platform == "darwin":
     for filename in find_files("/usr/local/Cellar/jpeg/8d/lib", ["libjpeg.8.dylib"]):
         external_so_files.append((filename, filename.replace("/usr/local/Cellar/jpeg/8d/lib/", "")))
 
+    # Add libresvg (if found)
+    resvg_path = "/usr/local/lib/libresvg.dylib"
+    if os.path.exists(resvg_path):
+        external_so_files.append((resvg_path, resvg_path.replace("/usr/local/lib/", "")))
+
     # Copy openshot.py Python bindings
-    src_files.append(("/Library/Frameworks/Python.framework/Versions/3.5/lib/python3.5/site-packages/openshot.py", "openshot.py"))
+    src_files.append((os.path.join(PATH, "openshot.py"), "openshot.py"))
     src_files.append((os.path.join(PATH, "installer", "launch-mac.sh"), "launch-mac.sh"))
 
     # Append Mac ICON file

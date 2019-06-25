@@ -26,24 +26,25 @@
  along with OpenShot Library.  If not, see <http://www.gnu.org/licenses/>.
  """
 
-import math
+zoomSeconds = [1, 3, 5, 10, 15, 20, 30, 45, 60, 75,
+               90, 120, 150, 180, 240, 300, 360, 480, 600, 720,
+               900, 1200, 1500, 1800, 2400, 2700, 3600, 4800, 6000, 7200]
 
 def zoomToSeconds(zoomValue):
     """ Convert zoom factor (slider position) into scale-seconds """
-
-    if (zoomValue <= 5):
-        # Under 1 minute, convert to seconds (exponential)
-        return 2**zoomValue
-    elif (zoomValue <= 11):
-        # convert to N minutes (exponential), in seconds
-        return 60 * (2**(zoomValue-6))
+    if zoomValue < len(zoomSeconds):
+        return zoomSeconds[zoomValue]
     else:
-        # Over 1 hour, convert to N hours (exponential), in seconds
-        return 3600 * (2**(zoomValue-12))
-
+        return zoomSeconds[-1]
 
 def secondsToZoom(scaleValue):
     """ Convert a number of seconds to a timeline zoom factor """
-
-    return int(math.log(scaleValue,2))
-
+    if scaleValue in zoomSeconds:
+        return zoomSeconds.index(scaleValue)
+    else:
+        # Find closest zoom
+        closestValue = zoomSeconds[0]
+        for zoomValue in zoomSeconds:
+            if zoomValue < scaleValue:
+                closestValue = zoomValue
+        return zoomSeconds.index(closestValue)
